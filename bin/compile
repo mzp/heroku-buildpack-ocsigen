@@ -3,8 +3,11 @@
 
 set -e
 set -o pipefail
-
-url=http://heroku-buildpack-ocaml.s3.amazonaws.com/ocaml-3.12.1.tgz
+pcre_url=https://s3-eu-west-1.amazonaws.com/midgard-heroku/pcre.tar.gz
+gdbm_url=http://codefirst.org/mzp/gdbm-1.tgz
+ocaml_url=http://codefirst.org/mzp/eliom/ocaml-4.00.tgz
+opam_url=http://codefirst.org/mzp/eliom/opam-full-1.0.tgz
+opam_lib_url=http://codefirst.org/mzp/eliom/eliom.tgz
 
 BUILD_DIR=$1
 CACHE_DIR=$2
@@ -17,25 +20,51 @@ function indent() {
   esac
 }
 
+function setup() {
+  dir=$1
+  url=$2
+
+  mkdir -p $dir
+  echo "fetching $url"
+  curl  $url -s -o - | tar xzf - -C $dir
+}
+function copy(){
+  for name in $@; do
+    echo "install $name"
+    mkdir -p $(dirname $BUILD_DIR/$name)
+    cp -r /app/$name $BUILD_DIR/$name
+  done
+}
+
 cd $BUILD_DIR
+echo "-----> Fetching PCRE binaries"
+setup /app $pcre_url
 
-# configure
-if [ -f configure ]; then
-  echo "-----> Configuring"
-  ./configure 2>&1 | indent
-fi
-
-dir=$(mktemp -t ocaml-XXXX)
-rm -fr $dir
-mkdir -p $dir
+echo "-----> Fetching GDBM binaries"
+setup /app/vendor/gdbm $gdbm_url
 
 echo "-----> Fetching OCaml binaries"
-curl  $url -s -o - | tar xzf - -C $dir
+setup /app/vendor/ocaml $ocaml_url
 
-echo "-----> Prepending $dir/bin to PATH"
-export PATH="$dir/bin:$PATH"
+echo "-----> Fetching OPAM libraries"
+setup /app/vendor/opam  $opam_url
+
+echo "-----> Fetching Eliom libraries"
+setup /app/vendor/opam-lib  $opam_lib_url
+
+echo "-----> Install runtime environment"
+copy vendor/pcre/{share,lib}
+copy vendor/gdbm/{share,lib}
+copy vendor/ocaml/lib
+copy vendor/opam-lib/system
+
+echo "-----> Prepending /app/vendor/*/bin to PATH"
+export PATH="/app/vendor/ocaml/bin:/app/vendor/opam/bin:$PATH"
+export LD_PRELOAD=/app/vendor/pcre/lib/libpcre.so.1
+
+echo "-----> Load OPAM"
+source /app/vendor/opam-lib/opam-init/init.sh
 
 # make
 echo "-----> Compiling with Make"
-
-make 2>&1 | indent
+make all 2>&1 | indent
